@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Channel Chat</title>
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Socket.io Client -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* 隐藏滚动条但保持功能 */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        [v-cloak] {
+            display: none;
+        }
+
+        /* 聊天滚动条：细、圆角、默认隐藏，hover 显示 */
+        .chat-scrollbar {
+            /* Firefox */
+            scrollbar-width: thin;
+            scrollbar-color: transparent transparent;
+        }
+
+        .chat-scrollbar:hover {
+            scrollbar-color: rgba(100, 116, 139, 0.35) transparent;
+        }
+
+        /* WebKit browsers */
+        .chat-scrollbar::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        .chat-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .chat-scrollbar::-webkit-scrollbar-thumb {
+            background: transparent;
+            border-radius: 9999px;
+            transition: background-color 160ms ease-in-out;
+        }
+
+        .chat-scrollbar:hover::-webkit-scrollbar-thumb {
+            background: rgba(100, 116, 139, 0.35);
+        }
+
+        .chat-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: rgba(100, 116, 139, 0.6);
+        }
+
+        /* 发送者头像与名称样式 */
+        .sender-avatar {
+            width: 28px;
+            height: 28px;
+            border-radius: 9999px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            color: white;
+            font-weight: 600;
+        }
+
+        .sender-name {
+            font-size: 13px;
+            font-weight: 400;
+            color: #334155;
+            /* slate-700 */
+        }
+
+        .sender-meta {
+            font-size: 11px;
+            color: #94a3b8;
+            /* gray-400 */
+        }
+
+        /* 行为面板对齐辅助 */
+        .action-panel.align-left {
+            left: 0;
+            right: auto;
+        }
+
+        .action-panel.align-right {
+            right: 0;
+            left: auto;
+        }
+
+        /* 引用跳转闪烁效果 */
+        @keyframes flash-bg {
+            from {
+                background-color: rgba(250, 204, 21, 0.6);
+            }
+
+            60% {
+                background-color: rgba(250, 204, 21, 0.2);
+            }
+
+            to {
+                background-color: transparent;
+            }
+        }
+
+        .flash-highlight {
+            animation: flash-bg 1000ms ease-out;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100 h-screen overflow-hidden flex flex-col font-sans text-slate-800">
+
+    <div id="app" v-cloak class="flex flex-col h-full max-w-2xl mx-auto bg-white shadow-xl relative w-full">
+
+        <!-- 顶部栏 -->
+        <header class="bg-white border-b border-gray-200 px-4 py-3 flex justify-between items-center shadow-sm z-10">
+            <div class="flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full" :class="connected ? 'bg-green-500' : 'bg-red-500'"></div>
+                <div class="leading-none">
+                    <h1 class="font-bold text-lg text-gray-800">实时诊疗</h1>
+                    <div class="text-gray-400 text-xs">#{{ channelId }}</div>
+                </div>
+            </div>
+            <div class="text-xs text-gray-500 flex flex-col items-end">
+                <span v-if="isSimulationMode"
+                    class="text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 mb-1">预览模式
+                    (本地存储)</span>
+                <span>当前用户: {{ username }} <span v-if="userid" class="text-gray-400">({{ userid }})</span></span>
+                <span class="text-gray-400 text-[10px]">{{ mode === 'view' ? '仅查看模式' : '实时交流模式' }}</span>
+            </div>
+        </header>
+
+        <!-- 聊天内容区域 -->
+        <main ref="chatContainer" class="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50/50 chat-scrollbar">
+            <div v-if="messages.length === 0" class="text-center text-gray-400 mt-10 text-sm">
+                暂无消息，开始聊天吧...
+            </div>
+
+            <div v-for="(msg, index) in messages" :key="index" :id="`msg-${msg.messageId || msg.clientId || index}`"
+                class="flex flex-col gap-1 transition-all duration-300 ease-in-out group"
+                :class="isSelf(msg.sender) ? 'items-end' : 'items-start'">
+
+                <!-- 发送者信息 (如果是自己则不显示名字，或者显示在右侧) -->
+                <div class="ml-1">
+                    <div :class="['flex items-baseline gap-2', isSelf(msg) ? 'flex-row-reverse' : 'flex-row']"
+                        @mouseenter="handleMessageHover(msg, $event)" @mouseleave="handleMessageLeave(msg, $event)">
+                        <div class="sender-name"
+                            :style="{ color: isSelf(msg) ? '#94a3b8' : getColorForId(msg.userid || msg.sender), fontWeight: '400' }">
+                            {{ msg.sender }}</div>
+                        <div class="sender-meta">{{ formatTime(msg.time) }}</div>
+
+                        <!-- three-dot and action panel placed next to time; visible on row hover -->
+                        <div class="relative" v-if="!msg.retracted&&mode!=='view'">
+                            <button @click.prevent="togglePanel(msg, $event)"
+                                class="panel-toggle text-gray-500 w-6 h-6 flex items-center justify-center opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition-opacity duration-150"
+                                aria-label="更多操作">⋯</button>
+                            <div :class="['action-panel', msg._panelOpen ? 'flex' : 'hidden', msg._panelAlign === 'left' ? 'align-left' : (msg._panelAlign === 'right' ? 'align-right' : '' ), 'flex-row', 'items-center', 'gap-2', 'p-2', 'bg-white', 'border', 'border-gray-200', 'rounded', 'shadow-md', 'absolute', 'top-full', 'mt-2', 'w-max']"
+                                style="z-index:99999;">
+                                <template v-if="canRecall(msg)">
+                                    <button @click.prevent="recall(msg)"
+                                        class="text-xs px-2 py-1 rounded hover:bg-gray-100 text-red-600">撤回</button>
+                                    <div class="w-px h-4 bg-gray-200 mx-1"></div>
+                                </template>
+                                <!-- 引用按钮 -->
+                                <button @click.prevent="startQuote(msg)"
+                                    class="text-xs px-2 py-1 rounded hover:bg-gray-100">引用</button>
+                                <div class="w-px h-4 bg-gray-200 mx-1"></div>
+                                <button @click.prevent="react(msg, 'like')"
+                                    class="text-xs px-2 py-1 rounded hover:bg-gray-100">👍</button>
+                                <button @click.prevent="react(msg, 'disagree')"
+                                    class="text-xs px-2 py-1 rounded hover:bg-gray-100">👎</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 气泡 -->
+                <div @contextmenu.prevent="openPanel(msg, $event)"
+                    class="max-w-[80%] rounded-2xl px-4 py-2 shadow-sm text-sm break-words relative group"
+                    :class="isSelf(msg) ? 'bg-blue-100 text-slate-800 rounded-br-none' : 'bg-white text-gray-800 border border-gray-100 rounded-bl-none'">
+
+                    <!-- 若已撤回则展示占位，否则展示正常内容与反应控件 -->
+                    <template v-if="msg.retracted">
+                        <p class="text-gray-400 italic">消息已撤回</p>
+                    </template>
+                    <template v-else>
+                        <!-- 引用预览（可点击跳转并闪烁目标消息） -->
+                        <div v-if="msg.quotedMessageId" class="mb-2">
+                            <div v-if="getQuotedMessage(msg) && !getQuotedMessage(msg).retracted"
+                                @click="scrollToMessage(msg.quotedMessageId)"
+                                class="cursor-pointer p-2 bg-gray-50 rounded border-l-2 border-gray-200 text-xs text-gray-600 hover:bg-gray-100">
+                                <div class="font-medium text-[12px] text-gray-700">{{ getQuotedMessage(msg).sender }}
+                                </div>
+                                <div class="truncate">{{ getQuotedPreviewText(getQuotedMessage(msg)) }}</div>
+                            </div>
+                            <div v-else
+                                class="p-2 bg-gray-50 rounded text-xs text-gray-400 italic border-l-2 border-gray-200">
+                                消息已撤回</div>
+                        </div>
+                        <!-- 文本消息 -->
+                        <p v-if="msg.type === 'text'" class="whitespace-pre-wrap">{{ msg.content }}</p>
+
+                        <!-- 图片或文件消息：若为 image/* 则展示图片，否则展示文件卡片 -->
+                        <div
+                            v-if="(msg.type === 'image') || (msg.type === 'file' && isObject(msg.content) && msg.content.mimeType && msg.content.mimeType.startsWith('image/'))">
+                            <img :src="isObject(msg.content) ? fileUrl(msg.content) : msg.content"
+                                class="max-w-full rounded-lg cursor-pointer hover:opacity-90 transition"
+                                @click="openImage(isObject(msg.content) ? fileUrl(msg.content) : msg.content)"
+                                alt="发送的图片">
+                        </div>
+
+                        <!-- 普通文件卡片 -->
+                        <div v-else-if="msg.type === 'file'" class="flex flex-col gap-1">
+                            <div class="flex items-center gap-3 bg-gray-50 p-2 rounded-lg border border-gray-100">
+                                <i data-lucide="file-text" class="w-6 h-6 text-gray-600"></i>
+                                <div class="flex-1 min-w-0">
+                                    <a :href="fileUrl(msg.content)" target="_blank"
+                                        class="block text-sm text-blue-600 truncate underline">
+                                        <span v-if="isObject(msg.content)">{{ msg.content.originalName }}</span>
+                                        <span v-else>{{ extractName(msg.content) }}</span>
+                                    </a>
+                                    <div class="text-[11px] text-gray-500">{{ isObject(msg.content) ?
+                                        (msg.content.mimeType
+                                        || '') : '' }} · {{ formatSize(isObject(msg.content) ? msg.content.size : 0) }}
+                                    </div>
+                                </div>
+                                <a :href="fileUrl(msg.content)" target="_blank"
+                                    class="text-gray-500 hover:text-gray-700">
+                                    <i data-lucide="download" class="w-5 h-5"></i>
+                                </a>
+                            </div>
+                        </div>
+
+                        <!-- 小计数：仅当数量>0 显示 -->
+                        <div class="mt-2 flex items-center gap-2 text-xs text-gray-600">
+                            <span v-if="reactionCount(msg, 'like') > 0">👍 {{ reactionCount(msg, 'like') }}</span>
+                            <span v-if="reactionCount(msg, 'disagree') > 0">👎 {{ reactionCount(msg, 'disagree')
+                                }}</span>
+                            <!-- <span v-if="reactionCount(msg, 'done') > 0">✅ {{ reactionCount(msg, 'done') }}</span> -->
+                        </div>
+                    </template>
+
+                    <!-- action panel moved next to sender meta above; removed duplicate side panel -->
+                </div>
+            </div>
+        </main>
+
+        <!-- 底部输入框 (仅聊天模式显示) -->
+        <footer v-if="mode !== 'view'" class="bg-white border-t border-gray-200 p-3 z-20">
+            <!-- 引用预览（发送时显示，可取消） -->
+            <div v-if="replyTo" class="mb-2 px-2">
+                <div class="flex items-start gap-2 bg-gray-50 border border-gray-100 rounded p-2 text-xs">
+                    <div class="flex-1 min-w-0">
+                        <div class="text-[12px] text-gray-700 font-medium">引用自 {{ replyTo.sender }}</div>
+                        <div class="text-[11px] text-gray-500 truncate">{{ getQuotedPreviewText(replyTo) }}</div>
+                    </div>
+                    <button @click.prevent="cancelQuote" class="text-xs text-gray-500 px-2">取消</button>
+                </div>
+            </div>
+            <div
+                class="flex items-end gap-2 bg-gray-100 rounded-xl p-2 border border-transparent focus-within:border-blue-300 focus-within:bg-white focus-within:shadow-sm transition-all">
+
+                <!-- 文件上传按钮 -->
+                <label
+                    class="p-2 text-gray-400 hover:text-blue-600 cursor-pointer transition-colors rounded-full hover:bg-gray-100 flex-shrink-0 relative">
+                    <i data-lucide="file" class="w-5 h-5"></i>
+                    <input type="file" accept="*/*" class="hidden" @change="handleFileUpload" :disabled="isUploading">
+                    <div v-if="isUploading" class="absolute inset-0 bg-white/80 flex items-center justify-center">
+                        <div class="w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full animate-spin">
+                        </div>
+                    </div>
+                </label>
+
+                <!-- 文本输入 -->
+                <textarea ref="messageInput" v-model="inputText" @keydown="onInputKeydown"
+                    placeholder="发送消息...(按住 Shift + Enter 换行)" rows="1"
+                    class="flex-1 bg-transparent border-none focus:ring-0 text-sm py-2 px-1 resize-none max-h-24 outline-none no-scrollbar text-gray-700 placeholder-gray-400"
+                    style="min-height: 2.5rem;"></textarea>
+
+                <!-- 发送按钮 -->
+                <button type="button" @click="sendMessage" :disabled="!inputText.trim()"
+                    class="p-2 bg-blue-600 text-white rounded-full hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md active:scale-95 flex-shrink-0">
+                    <i data-lucide="send" class="w-4 h-4"></i>
+                </button>
+            </div>
+        </footer>
+
+        <!-- 图片预览模态框 -->
+        <div v-if="previewImage"
+            class="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm"
+            @click="previewImage = null">
+            <img :src="previewImage"
+                class="max-w-full max-h-full rounded shadow-2xl animate-in zoom-in-95 duration-200">
+            <button class="absolute top-4 right-4 text-white hover:text-gray-300">
+                <i data-lucide="x" class="w-8 h-8"></i>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted, onBeforeUnmount, computed, nextTick, watch } = Vue;
+
+        // ================= 配置区域 =================
+        // 部署时将此处改为 false，并配置正确的 SERVER_URL
+        const FORCE_SIMULATION_MODE = false;
+        const SERVER_URL = 'http://localhost:3000';
+        // ===========================================
+
+        createApp({
+            setup() {
+                // 状态
+                const messages = ref([]);
+                const inputText = ref('');
+                const isUploading = ref(false);
+                const connected = ref(false);
+                const previewImage = ref(null);
+                const chatContainer = ref(null);
+                const messageInput = ref(null);
+                const replyTo = ref(null);
+
+                // URL 参数解析
+                const urlParams = new URLSearchParams(window.location.search);
+                // 默认值用于预览效果
+                const channelId = ref(urlParams.get('channelid') || 'demo-channel');
+                const username = ref(urlParams.get('username') || 'Guest' + Math.floor(Math.random() * 1000));
+                // 支持外部传入 userid；若没有则默认使用 username 作为 userid
+                const userid = ref(urlParams.get('userid') || username.value);
+                const mode = ref(urlParams.get('mode') || 'chat'); // 'chat' or 'view'
+
+                // 判断是否在 iframe 中运行或处于预览环境
+                const isSimulationMode = ref(FORCE_SIMULATION_MODE);
+
+                // Socket 实例
+                let socket = null;
+
+                // 滚动到底部
+                const scrollToBottom = () => {
+                    nextTick(() => {
+                        if (chatContainer.value) {
+                            chatContainer.value.scrollTop = chatContainer.value.scrollHeight;
+                        }
+                    });
+                };
+
+                // 输入框按键处理：Enter 发送，Shift+Enter 插入换行
+                const onInputKeydown = (e) => {
+                    try {
+                        if (!e) return;
+                        if (e.key !== 'Enter') return;
+                        // Shift+Enter 插入换行
+                        if (e.shiftKey) {
+                            // 阻止浏览器默认在 textarea 中插入换行一次，避免我们手动插入时出现双换行
+                            e.preventDefault();
+                            const el = e.target;
+                            if (!el) return;
+                            const start = el.selectionStart || 0;
+                            const end = el.selectionEnd || 0;
+                            const val = el.value || '';
+                            const newVal = val.substring(0, start) + '\n' + val.substring(end);
+                            // 更新元素与 v-model
+                            el.value = newVal;
+                            inputText.value = newVal;
+                            // 将光标移到换行后
+                            nextTick(() => {
+                                try { el.selectionStart = el.selectionEnd = start + 1; } catch (e) { }
+                            });
+                            return;
+                        }
+                        // 无修饰键时阻止默认（避免 textarea 自带行为）并发送消息
+                        e.preventDefault();
+                        sendMessage();
+                    } catch (err) {
+                        console.error('onInputKeydown error', err);
+                    }
+                };
+
+                const isSelf = (senderOrMsg) => {
+                    // 可以传入字符串（sender）或整个 msg 对象
+                    let id = '';
+                    if (senderOrMsg && typeof senderOrMsg === 'object') {
+                        id = senderOrMsg.userid || senderOrMsg.sender || '';
+                    } else {
+                        id = senderOrMsg || '';
+                    }
+                    // 以 userid 为优先比对，其次比对 username（向后兼容）
+                    return id === userid.value || id === username.value;
+                };
+
+                const formatTime = (isoString) => {
+                    const date = new Date(isoString);
+                    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                };
+
+                // 头像首字母
+                const avatarInitial = (id) => {
+                    if (!id) return '?';
+                    try {
+                        return String(id).trim().charAt(0).toUpperCase();
+                    } catch (e) {
+                        return '?';
+                    }
+                };
+
+                // 基于 id 的 base64 生成稳定颜色（HSL）用于用户名颜色
+                const getColorForId = (id) => {
+                    if (!id) return '#7c8799';
+                    try {
+                        const s = String(id);
+                        // base64 encode (utf-8 safe)
+                        let b64 = '';
+                        try {
+                            b64 = btoa(unescape(encodeURIComponent(s)));
+                        } catch (e) {
+                            // fallback: use raw string
+                            b64 = s;
+                        }
+                        let hash = 0;
+                        for (let i = 0; i < b64.length; i++) {
+                            hash = (hash * 31 + b64.charCodeAt(i)) % 360;
+                        }
+                        const hue = hash;
+                        const sat = 64;
+                        const light = 45;
+                        return `hsl(${hue}, ${sat}%, ${light}%)`;
+                    } catch (e) {
+                        return '#7c8799';
+                    }
+                };
+
+                // --- 业务逻辑 ---
+
+                // 发送文本消息
+                const sendMessage = () => {
+                    if (!inputText.value.trim()) return;
+
+                    // 生成唯一 clientId 用于乐观更新和服务器回执匹配
+                    const clientId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 9);
+                    const payload = {
+                        channelId: channelId.value,
+                        username: username.value,
+                        userid: userid.value,
+                        content: inputText.value,
+                        type: 'text',
+                        clientId,
+                        // 如果当前处于引用某条消息，携带 quotedMessageId
+                        quotedMessageId: replyTo.value ? (replyTo.value.messageId || replyTo.value.clientId) : undefined
+                    };
+
+                    // 乐观更新：立即把消息推入列表（标记为 pending）
+                    messages.value.push({
+                        time: new Date().toISOString(),
+                        sender: payload.username || payload.userid,
+                        userid: payload.userid,
+                        content: payload.content,
+                        type: payload.type,
+                        clientId: payload.clientId,
+                        // include quotedMessageId for immediate UI preview when quoting
+                        quotedMessageId: payload.quotedMessageId,
+                        pending: true
+                    });
+                    scrollToBottom();
+
+                    dispatchMessage(payload);
+                    inputText.value = '';
+                    // 发送后清理引用状态
+                    replyTo.value = null;
+                };
+
+                // 发送文件（支持任意类型）
+                const handleFileUpload = async (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+
+                    isUploading.value = true;
+
+                    try {
+                        let fileMeta = null;
+
+                        if (isSimulationMode.value) {
+                            // 模拟模式：转 Base64 当作可访问 URL 并保留元信息
+                            const dataUrl = await toBase64(file);
+                            // 模拟网络延迟
+                            await new Promise(r => setTimeout(r, 600));
+                            fileMeta = {
+                                url: dataUrl,
+                                originalName: file.name,
+                                mimeType: file.type,
+                                size: file.size
+                            };
+                        } else {
+                            // 真实模式：上传到 Node 服务器
+                            const formData = new FormData();
+                            formData.append('file', file);
+
+                            const res = await fetch(`${SERVER_URL}/api/upload`, {
+                                method: 'POST',
+                                body: formData
+                            });
+                            const data = await res.json();
+                            if (data && data.url) {
+                                // 返回的 data 里包含 url/originalName/mimeType/size
+                                fileMeta = data;
+                                // 保证 url 为绝对路径
+                                if (!fileMeta.url.startsWith('http')) {
+                                    fileMeta.url = SERVER_URL + fileMeta.url;
+                                }
+                            } else {
+                                throw new Error('Upload failed');
+                            }
+                        }
+
+                        // 生成 clientId 用于乐观更新匹配
+                        const clientId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 9);
+
+                        // 乐观更新（将文件消息立即加入消息列表）
+                        messages.value.push({
+                            time: new Date().toISOString(),
+                            sender: username.value || userid.value,
+                            userid: userid.value,
+                            content: fileMeta,
+                            type: 'file',
+                            clientId,
+                            // include quotedMessageId for optimistic preview
+                            quotedMessageId: replyTo.value ? (replyTo.value.messageId || replyTo.value.clientId) : undefined,
+                            pending: true
+                        });
+                        scrollToBottom();
+
+                        // 发送文件消息（content 使用对象，包含 url 与元数据）
+                        const formData = new FormData();
+                        formData.append('file', file);
+                        formData.append('channelId', channelId.value);
+                        formData.append('username', username.value);
+                        formData.append('userid', userid.value);
+                        formData.append('clientId', clientId);
+                        // 如果当前引用某条消息，随表单提交引用 id
+                        if (replyTo.value) formData.append('quotedMessageId', replyTo.value.messageId || replyTo.value.clientId || '');
+
+                        await fetch(`${SERVER_URL}/api/upload`, {
+                            method: 'POST',
+                            body: formData
+                        });
+                        // 发送后清理引用状态
+                        replyTo.value = null;
+
+                    } catch (error) {
+                        console.error('File upload failed:', error);
+                        alert('文件发送失败');
+                    } finally {
+                        isUploading.value = false;
+                        e.target.value = ''; // 重置 input
+                    }
+                };
+
+                // 统一消息分发（区分真实环境和模拟环境）
+                const dispatchMessage = (payload) => {
+                    if (isSimulationMode.value) {
+                        // --- 模拟逻辑 ---
+                        const mockMsg = {
+                            ...payload,
+                            time: new Date().toISOString(),
+                            sender: payload.username || payload.userid,
+                            userid: payload.userid || payload.username
+                        };
+
+                        // 存入 LocalStorage
+                        const key = `chat_logs_${channelId.value}`;
+                        const logs = JSON.parse(localStorage.getItem(key) || '[]');
+                        logs.push(mockMsg);
+                        localStorage.setItem(key, JSON.stringify(logs));
+
+                        // 模拟接收（直接推入当前数组）
+                        // 如果模拟消息包含 clientId，尝试替换已有 pending 消息
+                        if (mockMsg.clientId) {
+                            const idx = messages.value.findIndex(m => m.clientId === mockMsg.clientId);
+                            if (idx !== -1) {
+                                messages.value.splice(idx, 1, mockMsg);
+                            } else {
+                                messages.value.push(mockMsg);
+                            }
+                        } else {
+                            messages.value.push(mockMsg);
+                        }
+                        scrollToBottom();
+                    } else {
+                        // --- 真实 Socket.io 逻辑 ---
+                        if (socket) {
+                            socket.emit('message', payload);
+                        }
+                    }
+                };
+
+                const openImage = (src) => {
+                    previewImage.value = src;
+                };
+
+                // 辅助函数：File -> Base64
+                const toBase64 = (file) => new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.readAsDataURL(file);
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = error => reject(error);
+                });
+
+                // 辅助：判断是否为对象（文件元信息）
+                const isObject = (v) => v && typeof v === 'object' && !Array.isArray(v);
+
+                // 辅助：返回文件访问 URL（支持 content 为 string 或 object）
+                const fileUrl = (content) => {
+                    if (!content) return '#';
+                    if (isObject(content)) {
+                        const u = content.url || '';
+                        return u.startsWith('http') ? u : SERVER_URL + u;
+                    }
+                    return (content || '').startsWith('http') ? content : SERVER_URL + content;
+                };
+
+                // 辅助：从路径或 url 中提取文件名
+                const extractName = (url) => {
+                    if (!url) return '';
+                    try {
+                        const parts = url.split('/');
+                        return parts[parts.length - 1];
+                    } catch (e) {
+                        return url;
+                    }
+                };
+
+                // 辅助：格式化字节数
+                const formatSize = (bytes) => {
+                    if (!bytes) return '';
+                    const units = ['B', 'KB', 'MB', 'GB'];
+                    let i = 0;
+                    let val = bytes;
+                    while (val >= 1024 && i < units.length - 1) {
+                        val = val / 1024;
+                        i++;
+                    }
+                    return `${val.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+                };
+
+                // --- 拉取/轮询逻辑（用于替代刷新） ---
+                let isFetching = false;
+
+                // 生成消息唯一键（用于去重）：优先使用 clientId，其次使用 time+userid+content 指纹
+                // 生成消息唯一键（用于去重）：优先使用 messageId，其次 clientId，其次 time+userid+content 指纹
+                const messageKey = (m) => {
+                    if (!m) return '';
+                    if (m.messageId) return `id:${m.messageId}`;
+                    if (m.clientId) return `c:${m.clientId}`;
+                    const uid = m.userid || m.sender || '';
+                    let c = '';
+                    try {
+                        c = typeof m.content === 'object' ? JSON.stringify(m.content) : String(m.content);
+                    } catch (e) {
+                        c = String(m.content);
+                    }
+                    return `t:${m.time}|u:${uid}|c:${c}`;
+                };
+
+                // 从后端拉取历史并合并（保留本地 pending 未确认的消息）
+                const fetchHistory = async () => {
+                    if (isFetching) return;
+                    isFetching = true;
+                    try {
+                        const res = await fetch(`${SERVER_URL}/api/history/${encodeURIComponent(channelId.value)}`);
+                        if (!res.ok) return;
+                        const logs = await res.json();
+
+                        const seen = new Set();
+                        const merged = [];
+                        for (const lg of logs) {
+                            const k = messageKey(lg);
+                            if (!seen.has(k)) {
+                                seen.add(k);
+                                merged.push(lg);
+                            }
+                        }
+
+                        // 把本地 pending 消息（未被服务端持久化）追加到列表末尾
+                        for (const m of messages.value) {
+                            if (m.pending) {
+                                const k = messageKey(m);
+                                if (!seen.has(k)) {
+                                    merged.push(m);
+                                }
+                            }
+                        }
+
+                        messages.value = merged;
+                        scrollToBottom();
+                    } catch (e) {
+                        console.error('fetchHistory error', e);
+                    } finally {
+                        isFetching = false;
+                    }
+                };
+
+                // 合并单条由 websocket 推送过来的消息：
+                // - 若包含 clientId，尝试替换本地 pending 消息
+                // - 否则根据 messageKey 去重后追加
+                const mergeMessage = (m) => {
+                    if (!m) return;
+                    try {
+                        // 如果有 clientId，优先替换 pending
+                        // 如果有 messageId 或 clientId，尝试替换已有 pending
+                        if (m.messageId) {
+                            const idx = messages.value.findIndex(x => x.messageId === m.messageId || x.clientId === m.clientId);
+                            if (idx !== -1) {
+                                messages.value.splice(idx, 1, m);
+                                scrollToBottom();
+                                return;
+                            }
+                        }
+                        if (m.clientId) {
+                            const idx2 = messages.value.findIndex(x => x.clientId === m.clientId);
+                            if (idx2 !== -1) {
+                                messages.value.splice(idx2, 1, m);
+                                scrollToBottom();
+                                return;
+                            }
+                        }
+
+                        const k = messageKey(m);
+                        const exists = messages.value.some(x => messageKey(x) === k);
+                        if (!exists) {
+                            messages.value.push(m);
+                            scrollToBottom();
+                        }
+                    } catch (e) {
+                        console.error('mergeMessage error', e);
+                    }
+                };
+
+                // reaction 计数（安全读取）
+                const reactionCount = (m, action) => {
+                    if (!m || !m.reactions) return 0;
+                    const arr = m.reactions[action];
+                    if (!Array.isArray(arr)) return 0;
+                    return arr.length;
+                };
+
+                // 触发 reaction（通过 socket 发给后端，后端会切换并广播更新）
+                const react = (msg, action) => {
+                    if (isSimulationMode.value) {
+                        // 本地模拟：直接修改本地并存储
+                        try {
+                            const uid = userid.value;
+                            if (!msg.reactions) msg.reactions = { like: [], disagree: [], done: [] };
+                            const arr = msg.reactions[action] || [];
+                            const exists = arr.indexOf(uid) !== -1;
+                            if (exists) {
+                                msg.reactions[action] = arr.filter(u => u !== uid);
+                            } else {
+                                msg.reactions[action] = Array.from(new Set(arr.concat([uid])));
+                            }
+                        } catch (e) {
+                            console.error('local react error', e);
+                        }
+                        return;
+                    }
+
+                    if (!socket) return;
+                    const messageId = msg.messageId || msg.clientId || null;
+                    if (!messageId) return;
+                    socket.emit('reaction', { channelId: channelId.value, messageId, userid: userid.value, action });
+                };
+
+                // 停止轮询（当前使用 websocket-only，保留空实现以防止未定义调用）
+                const stopPolling = () => { };
+
+                // 判断当前用户是否能撤回该消息（本人并且在两分钟内）
+                const canRecall = (m) => {
+                    try {
+                        if (!m) return false;
+                        // 必须是自己发的
+                        if (!isSelf(m)) return false;
+                        const t = new Date(m.time).getTime();
+                        if (isNaN(t)) return false;
+                        return (Date.now() - t) <= (2 * 60 * 1000);
+                    } catch (e) {
+                        return false;
+                    }
+                };
+
+                // 撤回消息：通过 socket 发送给后端，由后端验证并广播更新
+                const recall = (m) => {
+                    if (isSimulationMode.value) {
+                        try {
+                            if (!m) return;
+                            if (!isSelf(m)) return;
+                            // 本地模拟：直接标记为撤回（没有时效校验）
+                            m.retracted = true;
+                        } catch (e) {
+                            console.error('local recall error', e);
+                        }
+                        return;
+                    }
+                    if (!socket || !m) return;
+                    const messageId = m.messageId || m.clientId || null;
+                    if (!messageId) return;
+                    socket.emit('recall', { channelId: channelId.value, messageId, userid: userid.value });
+                };
+
+                // 鼠标进入消息行时，测量面板是否会溢出并自动设置翻转对齐
+                const handleMessageHover = (msg, evt) => {
+                    try {
+                        // 如果是仅查看模式，不要处理
+                        if (mode.value === 'view') return;
+                        if (!msg || !evt) return;
+                        // 如果面板已经打开，不要重新计算位置，保持固定（避免抖动）
+                        if (msg._panelOpen) return;
+                        // 支持直接传入宿主元素或标准事件对象
+                        const host = (evt instanceof Element) ? evt : (evt.currentTarget || null);
+                        if (!host) return;
+                        const panel = host.querySelector('.action-panel');
+                        if (!panel) return;
+
+                        // 临时显示以测量尺寸（但保持不可见，避免闪烁）
+                        panel.classList.remove('hidden');
+                        panel.style.visibility = 'hidden';
+
+                        const panelRect = panel.getBoundingClientRect();
+                        const hostRect = host.getBoundingClientRect();
+                        const vw = window.innerWidth || document.documentElement.clientWidth;
+                        const margin = 18; // 保持一点视口边距
+
+                        let align = null;
+                        if (isSelf(msg)) {
+                            // 默认右对齐（自己的消息在右侧），但如果右对齐导致左侧溢出则翻转为左对齐
+                            const rightAlignedLeft = hostRect.right - panelRect.width;
+                            if (rightAlignedLeft < margin) align = 'left';
+                            else align = 'right';
+                        } else {
+                            // 默认左对齐（他人的消息在左侧），但如果左对齐超出视口则翻转为右对齐
+                            const leftAlignedRight = hostRect.left + panelRect.width;
+                            if (leftAlignedRight > vw - margin) align = 'right';
+                            else align = 'left';
+                        }
+
+                        // 恢复状态（实际显示由 CSS 的 group-hover 控制），并记录选择的对齐方式
+                        panel.style.visibility = '';
+                        panel.classList.add('hidden');
+                        msg._panelAlign = align;
+                    } catch (e) {
+                        console.error('handleMessageHover error', e);
+                    }
+                };
+
+                const handleMessageLeave = (msg, evt) => {
+                    try {
+                        if (!msg) return;
+                        // 延迟清理，避免快速移动导致闪烁
+                        // 但如果面板已打开，则不要清理对齐信息（保持面板位置固定）
+                        setTimeout(() => {
+                            if (msg && !msg._panelOpen) msg._panelAlign = null;
+                        }, 80);
+                    } catch (e) {
+                        console.error('handleMessageLeave error', e);
+                    }
+                };
+
+                // 查找消息对象（支持 messageId 或 clientId）
+                const findMessageById = (id) => {
+                    if (!id) return null;
+                    return messages.value.find(m => m.messageId === id || m.clientId === id) || null;
+                };
+
+                const getQuotedMessage = (m) => {
+                    if (!m || !m.quotedMessageId) return null;
+                    return findMessageById(m.quotedMessageId);
+                };
+
+                const getQuotedPreviewText = (m) => {
+                    if (!m) return '';
+                    if (m.retracted) return '消息已撤回';
+                    if (m.type === 'text') return m.content;
+                    if (m.type === 'file' && isObject(m.content)) return m.content.originalName || extractName(m.content.url || '');
+                    return m.type || '';
+                };
+
+                // 平滑滚动并闪烁指定消息
+                const scrollToMessage = (id) => {
+                    if (!id) return;
+                    const el = document.getElementById(`msg-${id}`);
+                    if (!el) return;
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    try {
+                        el.classList.remove('flash-highlight');
+                        // 强制回流以重触发动画
+                        void el.offsetWidth;
+                        el.classList.add('flash-highlight');
+                        setTimeout(() => el.classList.remove('flash-highlight'), 1200);
+                    } catch (e) {
+                        // ignore
+                    }
+                };
+
+                // 开始引用某条消息（将状态设置为 replyTo 并聚焦输入框）
+                const startQuote = (msg) => {
+                    if (!msg) return;
+                    replyTo.value = msg;
+                    nextTick(() => {
+                        try {
+                            if (messageInput.value) messageInput.value.focus();
+                        } catch (e) { }
+                    });
+                };
+
+                const cancelQuote = () => {
+                    replyTo.value = null;
+                };
+
+                // 打开/切换/关闭面板的辅助方法
+                const closeAllPanels = () => {
+                    try {
+                        for (const m of messages.value) {
+                            if (m && m._panelOpen) m._panelOpen = false;
+                        }
+                    } catch (e) {
+                        console.error('closeAllPanels error', e);
+                    }
+                };
+
+                const openPanel = (msg, evt) => {
+                    try {
+                        if (!msg) return;
+                        // 先关闭其它面板
+                        closeAllPanels();
+                        // 计算对齐：找到包含 `.action-panel` 的最靠近的宿主元素，确保
+                        // 无论是通过点击三点还是右键气泡，测量逻辑都针对相同宿主
+                        const findPanelHost = (startNode) => {
+                            try {
+                                let n = startNode instanceof Element ? startNode : (startNode && startNode.target ? startNode.target : null);
+                                while (n && n !== document) {
+                                    if (n.querySelector && n.querySelector('.action-panel')) return n;
+                                    n = n.parentElement;
+                                }
+                            } catch (e) {
+                                // ignore
+                            }
+                            return null;
+                        };
+
+                        let host = null;
+                        if (evt) host = findPanelHost(evt.target || evt.currentTarget);
+                        // fallback: try currentTarget or document-level group
+                        if (!host && evt && evt.currentTarget) host = findPanelHost(evt.currentTarget) || (evt.currentTarget.closest ? evt.currentTarget.closest('.group') : null);
+                        if (!host && evt && evt.target) host = findPanelHost(evt.target) || (evt.target.closest ? evt.target.closest('.group') : null);
+                        // 最终回退为整个 message 的 .group
+                        if (!host && evt && evt.target) host = (evt.target.closest ? evt.target.closest('.group') : null);
+
+                        handleMessageHover(msg, host || (evt && evt.currentTarget) || null);
+                        msg._panelOpen = true;
+                    } catch (e) {
+                        console.error('openPanel error', e);
+                    }
+                };
+
+                const togglePanel = (msg, evt) => {
+                    try {
+                        if (!msg) return;
+                        if (msg._panelOpen) {
+                            msg._panelOpen = false;
+                            return;
+                        }
+                        // 打开前先关闭其他所有面板
+                        closeAllPanels();
+                        const findPanelHost = (startNode) => {
+                            try {
+                                let n = startNode instanceof Element ? startNode : (startNode && startNode.target ? startNode.target : null);
+                                while (n && n !== document) {
+                                    if (n.querySelector && n.querySelector('.action-panel')) return n;
+                                    n = n.parentElement;
+                                }
+                            } catch (e) {
+                                // ignore
+                            }
+                            return null;
+                        };
+
+                        let host = null;
+                        if (evt) host = findPanelHost(evt.target || evt.currentTarget);
+                        if (!host && evt && evt.currentTarget) host = findPanelHost(evt.currentTarget) || (evt.currentTarget.closest ? evt.currentTarget.closest('.group') : null);
+                        if (!host && evt && evt.target) host = findPanelHost(evt.target) || (evt.target.closest ? evt.target.closest('.group') : null);
+                        if (!host && evt && evt.target) host = (evt.target.closest ? evt.target.closest('.group') : null);
+
+                        handleMessageHover(msg, host || (evt && evt.currentTarget) || null);
+                        msg._panelOpen = true;
+                    } catch (e) {
+                        console.error('togglePanel error', e);
+                    }
+                };
+
+                // 点击页面任意非面板区域时关闭所有面板
+                const handleOutsideClick = (e) => {
+                    try {
+                        // 如果点击发生在面板内部或切换按钮上，则忽略（不关闭）
+                        if (e.target.closest && (e.target.closest('.action-panel') || e.target.closest('.panel-toggle'))) return;
+                        closeAllPanels();
+                    } catch (err) {
+                        console.error('handleOutsideClick error', err);
+                    }
+                };
+
+                // 初始化
+                onMounted(() => {
+                    lucide.createIcons();
+
+                    if (isSimulationMode.value) {
+                        console.log('Running in Simulation Mode');
+                        connected.value = true;
+                        // 加载历史记录
+                        const key = `chat_logs_${channelId.value}`;
+                        const savedLogs = JSON.parse(localStorage.getItem(key) || '[]');
+                        messages.value = savedLogs;
+                        scrollToBottom();
+
+                        // 模拟“别人”发消息的监听（使用 storage event 跨标签页同步）
+                        window.addEventListener('storage', (e) => {
+                            if (e.key === key) {
+                                const newLogs = JSON.parse(e.newValue || '[]');
+                                if (newLogs.length > messages.value.length) {
+                                    // 简单的全量更新逻辑
+                                    messages.value = newLogs;
+                                    scrollToBottom();
+                                }
+                            }
+                        });
+
+                    } else {
+                        // 连接真实后端
+                        socket = io(SERVER_URL);
+
+                        socket.on('connect', () => {
+                            connected.value = true;
+                            socket.emit('join', channelId.value);
+                            // 告知服务端当前用户 id（socket 连接级别，可选）
+                            socket.emit('identify', { userid: userid.value, username: username.value });
+                            // 连接后触发一次历史拉取
+                            fetchHistory();
+                        });
+
+                        socket.on('disconnect', () => {
+                            connected.value = false;
+                            // no-op: polling removed, rely on websocket pushes
+                        });
+
+                        socket.on('history', (logs) => {
+                            // 直接使用服务端历史（覆盖本地），并保留 pending
+                            fetchHistory();
+                        });
+
+                        socket.on('newMessage', (msg) => {
+                            // 收到单条新消息，合并到本地（替换 pending 或追加）
+                            mergeMessage(msg);
+                        });
+
+                        socket.on('updateMessage', (msg) => {
+                            // 服务端广播的消息更新（例如 reactions 变更）
+                            mergeMessage(msg);
+                        });
+
+                        // 连接成功后（connect 回调里也会触发），无需重复 fetchHistory here
+                    }
+                    // 全局点击监听，用于关闭打开的面板
+                    document.addEventListener('click', handleOutsideClick);
+                });
+
+                onBeforeUnmount(() => {
+                    stopPolling();
+                    if (socket) socket.disconnect();
+                    document.removeEventListener('click', handleOutsideClick);
+                });
+
+                return {
+                    messages,
+                    inputText,
+                    sendMessage,
+                    onInputKeydown,
+                    handleFileUpload,
+                    isUploading,
+                    channelId,
+                    username,
+                    userid,
+                    mode,
+                    isSelf,
+                    formatTime,
+                    chatContainer,
+                    connected,
+                    previewImage,
+                    openImage,
+                    isSimulationMode,
+                    messageInput,
+                    replyTo,
+                    startQuote,
+                    cancelQuote,
+                    findMessageById,
+                    getQuotedMessage,
+                    getQuotedPreviewText,
+                    scrollToMessage,
+                    // helpers for template
+                    isObject,
+                    fileUrl,
+                    extractName,
+                    formatSize,
+                    avatarInitial,
+                    getColorForId
+                    , reactionCount,
+                    react,
+                    stopPolling,
+                    canRecall,
+                    recall,
+                    handleMessageHover,
+                    handleMessageLeave,
+                    openPanel,
+                    togglePanel,
+                    closeAllPanels
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+
+</html>
