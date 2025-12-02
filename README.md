@@ -1,5 +1,11 @@
 # 实时聊天 (Chat)
 
+::: warning
+
+本项目为小型内网or学习型项目，未作任何鉴权、保密功能，请谨慎在公网状态下使用。
+
+:::
+
 本仓库是一个轻量的实时聊天演示应用（前后端同仓），用于展示即时消息、文件上传、引用、表情反应、撤回、乐观更新以及通过 HTTP 接口外部发送消息的能力。适合作为小型内网工具或作为学习 socket.io + Express + 简单前端集成的示例。
 
 ![demo](image/README/demo.png)
@@ -12,9 +18,10 @@
 - 乐观更新：发送消息时客户端会生成 `clientId` 并立刻把消息加入本地列表（pending），服务器回执后会替换或更新。
 - 用户标识与配色：支持 `userid` 与 `username`，客户端根据 `userid` 为用户名着色，方便区分不同用户。
 - 引用（Reply/Quote）：可以引用已有消息，引用信息通过 `quotedMessageId` 随消息保存与广播，点击引用可跳转并闪烁目标消息。
-- 反应（Reactions）：支持简单表情反应（如 /），通过 socket 同步到所有客户端。
+- 反应（Reactions）：支持简单表情反应（如 👍/👎），通过 socket 同步到所有客户端。
 - 撤回（Recall）：发送者可在两分钟内撤回自己的消息，撤回后会把消息标记为 `retracted` 并在 UI 中展示占位文本。
 - 外部 HTTP 推送：新增 `POST /api/send-msg`，允许外部系统以 HTTP 请求发送消息到指定频道（同样会持久化并广播）。
+- 模式：支持“实时聊天”模式和“仅查看”模式。
 - 日志持久化：消息以 JSON 文件保存在 `logs/<channelId>.json`，方便调试与历史拉取。
 - 调试接口：`GET /api/room/:channelId` 可查看当前在房间内的 socket 列表（用于诊断未收到广播的问题）。
 
@@ -147,9 +154,5 @@ curl.exe -X POST "http://localhost:3000/api/send-msg" -H "Content-Type: applicat
 ## 贡献与许可
 
 欢迎改进与复用；本项目为示例性代码，不包含复杂的安全/权限校验。若用于生产，请补充鉴权、输入校验、上传类型/大小限制、以及审计与清理机制。
-
----
-
-如果你希望我把 README 的某部分翻译为英文、或补充具体的 API 请求示例（包括 PowerShell/Node/curl）及完整的示例脚本，我可以继续完善.
 
 > 本项目由copilot、gemini辅助开发
