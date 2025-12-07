@@ -157,18 +157,7 @@ http://<backend-server>:<port>/online-chat/?mode=chat&channelid=channelId&userna
 ></iframe>
 ```
 
-## 四、注意事项
-1. **参数取值限制**：`mode` 参数仅支持 `chat` 或 `view`，传入其他值会导致系统默认使用 `view` 模式；
-2. **URL 编码**：若 `username` 包含空格、中文、特殊符号（如 `&`、`=`），需进行 URL 编码（例如：`张三 123` 编码为 `%E5%BC%A0%E4%B8%89%20123`）；
-3. **唯一性要求**：`userid` 需保证全局唯一，避免不同用户使用相同 `userid` 导致身份混淆；
-4. **跨域配置**：若嵌入到不同域名的页面，需确保聊天系统服务端配置了跨域允许（CORS），否则可能出现 iframe 加载失败；
-5. **尺寸适配**：可根据实际需求调整 iframe 的 `width` 和 `height`，建议使用百分比或响应式布局适配不同设备。
 
-## 五、常见问题
-- Q：传入无效的 `channelid` 会怎样？
-  A：系统会提示“频道不存在”，并无法加载聊天内容；
-- Q：`view` 模式下是否能接收新消息？
-  A：可以，只读模式仅限制发送消息，新消息会实时展示。
 
 ## 数据模型（消息示例）
 
@@ -195,13 +184,18 @@ http://<backend-server>:<port>/online-chat/?mode=chat&channelid=channelId&userna
 
 ## 常见问题与调试
 
-- 客户端不收到 `newMessage`：
-
+- Q：客户端不收到 `newMessage`：
   - 检查服务端日志是否有广播输出（`[send-msg] broadcast` 等调试日志）。
   - 使用 `GET /api/room/:channelId` 查看是否有 socket id 在房间内（若为空表示客户端未成功 `join`）。
   - 确认客户端在连接后执行了 `socket.emit('join', channelId)`（在浏览器控制台查看 network/socket events）。
-- 中文在 PowerShell 下通过 `curl`/`Invoke-RestMethod` 发送出现乱码：请使用 `curl.exe` 并显式指定 `charset=utf-8`，或用 Node/其他 HTTP 客户端确保 UTF-8 编码。
-- `node server.js` 退出（Exit Code 1）：请查看控制台 stderr 输出（通常会给出缺失依赖或端口占用信息），将错误粘贴到 issue 或聊天中以便定位。
+- Q：中文在 PowerShell 下通过 `curl`/`Invoke-RestMethod` 发送出现乱码：请使用 `curl.exe` 并显式指定 `charset=utf-8`，或用 Node/其他 HTTP 客户端确保 UTF-8 编码。
+  - `node server.js` 退出（Exit Code 1）：请查看控制台 stderr 输出（通常会给出缺失依赖或端口占用信息），将错误粘贴到 issue 或聊天中以便定位。
+- Q：传入无效的 `channelid` 会怎样？
+  - A：系统不会有任何提示，会创建一个新的channel，即便是view模式。
+- Q：`view` 模式下是否能接收新消息？
+  - A：可以，只读模式仅限制发送消息，新消息会实时展示。
+- Q：`view` 模式下是否能进行点赞？
+  - A：不可以。
 
 ## 开发者说明
 
