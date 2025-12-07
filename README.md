@@ -110,6 +110,64 @@ curl.exe -X POST "http://localhost:3000/api/send-msg" -H "Content-Type: applicat
 - 输入行为：输入框支持 `Shift+Enter` 插入换行（手动处理以避免双换行），`Enter` 发送消息。发送后会清除 `replyTo`（引用状态）。
 - 消息显示：文本消息使用 `white-space: pre-wrap`，以保留换行与空格。
 
+## 浏览器地址参数
+
+本部分详细说明实时聊天系统的浏览器访问参数配置，该系统支持通过 `iframe` 嵌入到任意网页中，通过 URL 参数可灵活配置聊天模式、频道及用户信息。
+
+### 基础访问格式
+系统的核心访问 URL 格式如下：
+```
+http://<backend-server>:<port>/online-chat/?mode=chat&channelid=channelId&username=userName&userid=userId
+```
+
+### 参数详细说明
+| 参数名      | 必选 | 取值范围       | 说明                                                                 |
+|-------------|------|----------------|----------------------------------------------------------------------|
+| `mode`      | 是   | `chat` / `view`| 聊天模式：<br>- `chat`：可发言模式，用户能发送/接收消息<br>- `view`：只读模式，仅能接收消息，无法发送 |
+| `channelid` | 是   | 数字（如 112） | 聊天频道唯一标识，用于区分不同的聊天房间/频道。若传入时channelId不存在会自动创建该channelId                        |
+| `username`  | 是   | 字符串         | 显示在聊天界面的用户名，建议使用 URL 编码（如含空格/特殊字符时）|
+| `userid`    | 是   | 字符串/数字    | 用户唯一标识，用于系统识别用户身份，需保证同一用户的 `userid` 唯一    |
+
+### iframe网页示例
+嵌入到网页的 `iframe` 示例代码：
+
+1. 可发言模式（chat）
+   
+```html
+<iframe 
+  src="/online-chat/?mode=chat&channelid=112&username=张三&userid=user_10086"
+  width="100%" 
+  height="600px"
+  frameborder="0"
+  title="实时聊天窗口（可发言）"
+></iframe>
+```
+
+2. 只读模式（view）
+   
+```html
+<iframe 
+  src="/online-chat/?mode=view&channelid=112&username=访客&userid=guest_9999"
+  width="100%" 
+  height="600px"
+  frameborder="0"
+  title="实时聊天窗口（只读）"
+></iframe>
+```
+
+## 四、注意事项
+1. **参数取值限制**：`mode` 参数仅支持 `chat` 或 `view`，传入其他值会导致系统默认使用 `view` 模式；
+2. **URL 编码**：若 `username` 包含空格、中文、特殊符号（如 `&`、`=`），需进行 URL 编码（例如：`张三 123` 编码为 `%E5%BC%A0%E4%B8%89%20123`）；
+3. **唯一性要求**：`userid` 需保证全局唯一，避免不同用户使用相同 `userid` 导致身份混淆；
+4. **跨域配置**：若嵌入到不同域名的页面，需确保聊天系统服务端配置了跨域允许（CORS），否则可能出现 iframe 加载失败；
+5. **尺寸适配**：可根据实际需求调整 iframe 的 `width` 和 `height`，建议使用百分比或响应式布局适配不同设备。
+
+## 五、常见问题
+- Q：传入无效的 `channelid` 会怎样？
+  A：系统会提示“频道不存在”，并无法加载聊天内容；
+- Q：`view` 模式下是否能接收新消息？
+  A：可以，只读模式仅限制发送消息，新消息会实时展示。
+
 ## 数据模型（消息示例）
 
 ```json
